@@ -4,6 +4,10 @@
 
 import { CalendarViewMode, PageDetectionResult } from './types';
 import { isValidDate, normalizeDate, createNormalizedDate } from './date-utils';
+import { DOM_SELECTORS, DOM_ATTRIBUTES } from './constants/dom-selectors';
+import { DATE_CONSTANTS } from './constants/date-constants';
+import { REGEX_PATTERNS } from './constants/regex-patterns';
+import { MESSAGES } from './constants/messages';
 
 /**
  * Service for detecting Google Calendar page state
@@ -46,9 +50,9 @@ export class PageDetector {
     }
 
     // Try to detect from DOM
-    const weekView = document.querySelector('[data-viewtype="week"]');
-    const dayView = document.querySelector('[data-viewtype="day"]');
-    const monthView = document.querySelector('[data-viewtype="month"]');
+    const weekView = document.querySelector(DOM_SELECTORS.WEEK_VIEW);
+    const dayView = document.querySelector(DOM_SELECTORS.DAY_VIEW);
+    const monthView = document.querySelector(DOM_SELECTORS.MONTH_VIEW);
 
     if (weekView) return CalendarViewMode.WEEK;
     if (dayView) return CalendarViewMode.DAY;
@@ -75,8 +79,8 @@ export class PageDetector {
         }
       }
 
-      // Try to parse from URL path (e.g., /calendar/u/0/r/week/2025/11/30)
-      const urlMatch = window.location.pathname.match(/\/(week|day|month)\/(\d{4})\/(\d{1,2})\/(\d{1,2})/);
+      // Try to parse from URL path
+      const urlMatch = window.location.pathname.match(REGEX_PATTERNS.URL_DATE_PATH);
       if (urlMatch) {
         const year = parseInt(urlMatch[2]);
         const month = parseInt(urlMatch[3]) - 1; // Month is 0-indexed
@@ -90,11 +94,11 @@ export class PageDetector {
 
       // Try to get from DOM - look for date indicators in week view headers
       // Google Calendar week view has date headers with data-date attributes
-      const dateElements = document.querySelectorAll('[data-date]');
+      const dateElements = document.querySelectorAll(DOM_SELECTORS.DATE_ATTRIBUTE);
       if (dateElements.length > 0) {
         const dates = Array.from(dateElements)
           .map(el => {
-            const dateStr = el.getAttribute('data-date');
+            const dateStr = el.getAttribute(DOM_ATTRIBUTES.DATA_DATE);
             if (!dateStr) return null;
             
             let date: Date | null = null;
@@ -129,8 +133,13 @@ export class PageDetector {
             
             // Sunday is 6 days after Monday
             const sunday = new Date(monday);
-            sunday.setDate(sunday.getDate() + 6);
-            sunday.setHours(23, 59, 59, 999);
+            sunday.setDate(sunday.getDate() + DATE_CONSTANTS.DAYS_IN_WEEK - 1);
+            sunday.setHours(
+              DATE_CONSTANTS.END_OF_DAY_HOURS,
+              DATE_CONSTANTS.END_OF_DAY_MINUTES,
+              DATE_CONSTANTS.END_OF_DAY_SECONDS,
+              DATE_CONSTANTS.END_OF_DAY_MILLISECONDS
+            );
             
             if (isValidDate(monday) && isValidDate(sunday)) {
               return { start: monday, end: sunday };
@@ -140,7 +149,12 @@ export class PageDetector {
           // For other views or fallback
           const start = normalizeDate(minDate);
           const end = new Date(maxDate);
-          end.setHours(23, 59, 59, 999);
+          end.setHours(
+            DATE_CONSTANTS.END_OF_DAY_HOURS,
+            DATE_CONSTANTS.END_OF_DAY_MINUTES,
+            DATE_CONSTANTS.END_OF_DAY_SECONDS,
+            DATE_CONSTANTS.END_OF_DAY_MILLISECONDS
+          );
           
           if (isValidDate(start) && isValidDate(end)) {
             return { start, end };
@@ -156,7 +170,7 @@ export class PageDetector {
       
       return null;
     } catch (error) {
-      console.error('[Page Detector] Error detecting date range:', error);
+      console.error(MESSAGES.ERROR.ERROR_DETECTING_DATE_RANGE, error);
       return null;
     }
   }
@@ -167,7 +181,7 @@ export class PageDetector {
   private calculateRange(baseDate: Date, viewMode: CalendarViewMode): { start: Date; end: Date } {
     // Validate base date
     if (!isValidDate(baseDate)) {
-      console.warn('[Page Detector] Invalid base date, using today:', baseDate);
+      console.warn(MESSAGES.ERROR.INVALID_BASE_DATE, baseDate);
       baseDate = normalizeDate(new Date());
     } else {
       baseDate = normalizeDate(baseDate);
@@ -186,34 +200,46 @@ export class PageDetector {
         const dayOfWeek = start.getDay();
         // Calculate days to subtract to get to Monday (0=Sunday, 1=Monday, etc.)
         // If Sunday (0), go back 6 days. If Monday (1), no change. If Tuesday (2), go back 1 day, etc.
-        const diffToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+        const diffToMonday = dayOfWeek === DATE_CONSTANTS.SUNDAY_INDEX 
+          ? -(DATE_CONSTANTS.DAYS_IN_WEEK - 1) 
+          : DATE_CONSTANTS.MONDAY_INDEX - dayOfWeek;
         const mondayDate = new Date(start);
         mondayDate.setDate(mondayDate.getDate() + diffToMonday);
-        mondayDate.setHours(0, 0, 0, 0);
+        mondayDate.setHours(
+          DATE_CONSTANTS.MIDNIGHT_HOURS,
+          DATE_CONSTANTS.MIDNIGHT_MINUTES,
+          DATE_CONSTANTS.MIDNIGHT_SECONDS,
+          DATE_CONSTANTS.MIDNIGHT_MILLISECONDS
+        );
         start = mondayDate;
         // Sunday is 6 days after Monday
         end = new Date(start);
-        end.setDate(end.getDate() + 6);
-        end.setHours(23, 59, 59, 999);
+        end.setDate(end.getDate() + DATE_CONSTANTS.DAYS_IN_WEEK - 1);
+        end.setHours(
+          DATE_CONSTANTS.END_OF_DAY_HOURS,
+          DATE_CONSTANTS.END_OF_DAY_MINUTES,
+          DATE_CONSTANTS.END_OF_DAY_SECONDS,
+          DATE_CONSTANTS.END_OF_DAY_MILLISECONDS
+        );
         break;
       case CalendarViewMode.MONTH:
         end.setMonth(end.getMonth() + 1);
         break;
       default:
-        end.setDate(end.getDate() + 7); // Default to week
+        end.setDate(end.getDate() + DATE_CONSTANTS.DAYS_IN_WEEK); // Default to week
     }
 
     // Final validation
     if (!isValidDate(start) || !isValidDate(end)) {
-      console.error('[Page Detector] Invalid calculated date range:', { start, end });
+      console.error(MESSAGES.ERROR.INVALID_CALCULATED_RANGE, { start, end });
       // Fallback to current week
       const today = normalizeDate(new Date());
       const dayOfWeek = today.getDay();
-      const diff = today.getDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1);
+      const diff = today.getDate() - dayOfWeek + (dayOfWeek === DATE_CONSTANTS.SUNDAY_INDEX ? -(DATE_CONSTANTS.DAYS_IN_WEEK - 1) : DATE_CONSTANTS.MONDAY_INDEX);
       const fallbackStart = new Date(today);
       fallbackStart.setDate(diff);
       const fallbackEnd = new Date(fallbackStart);
-      fallbackEnd.setDate(diff + 7);
+      fallbackEnd.setDate(diff + DATE_CONSTANTS.DAYS_IN_WEEK);
       return { start: fallbackStart, end: fallbackEnd };
     }
 

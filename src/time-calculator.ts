@@ -4,6 +4,8 @@
 
 import { CalendarEvent, ActivitySummary } from './types';
 import { isValidDate, normalizeDate } from './date-utils';
+import { COLOR_NAMES, DEFAULT_COLOR, DEFAULT_COLOR_NAME } from './constants/colors';
+import { MESSAGES } from './constants/messages';
 
 /**
  * Grouping mode for summaries
@@ -26,8 +28,8 @@ export class TimeCalculator {
     if (groupingMode === GroupingMode.BY_COLOR) {
       // Group by color
       events.forEach(event => {
-        // Use color or fallback to "No color"
-        const color = event.color || '#e1e1e1';
+        // Use color or fallback to default
+        const color = event.color || DEFAULT_COLOR;
         const key = this.normalizeColor(color);
         if (!grouped.has(key)) {
           grouped.set(key, []);
@@ -87,7 +89,7 @@ export class TimeCalculator {
    * Normalizes color for grouping (rounds similar colors)
    */
   private normalizeColor(color: string): string {
-    if (!color) return '#e1e1e1';
+    if (!color) return DEFAULT_COLOR;
     // Return as-is for now, could implement color rounding if needed
     return color;
   }
@@ -96,34 +98,9 @@ export class TimeCalculator {
    * Gets a human-readable name for a color
    */
   private getColorName(color: string): string {
-    // Map common colors to names
-    const colorNames: { [key: string]: string } = {
-      '#a4bdfc': 'Lavender',
-      '#7ae7bf': 'Sage',
-      '#dbadff': 'Grape',
-      '#ff887c': 'Flamingo',
-      '#fbd75b': 'Banana',
-      '#ffb878': 'Tangerine',
-      '#46d6db': 'Peacock',
-      '#e1e1e1': 'Graphite',
-      '#5484ed': 'Blueberry',
-      '#51b749': 'Basil',
-      '#dc2127': 'Tomato',
-      '#ff9800': 'Orange',
-      '#9c27b0': 'Purple',
-      '#00bcd4': 'Cyan',
-      '#4caf50': 'Green',
-      '#f44336': 'Red',
-      '#2196f3': 'Blue',
-      '#ffc107': 'Amber',
-      '#795548': 'Brown',
-      '#607d8b': 'Blue Grey',
-    };
-    
     // Normalize color (uppercase, ensure #)
     const normalized = color.toUpperCase().startsWith('#') ? color.toUpperCase() : `#${color.toUpperCase()}`;
-    
-    return colorNames[normalized] || `Color ${normalized}`;
+    return COLOR_NAMES[normalized] || `${DEFAULT_COLOR_NAME} ${normalized}`;
   }
 
   /**
@@ -161,7 +138,7 @@ export class TimeCalculator {
   ): CalendarEvent[] {
     // Validate input dates
     if (!isValidDate(startDate) || !isValidDate(endDate)) {
-      console.warn('[Time Calculator] Invalid date range for filtering, returning all events');
+      console.warn(MESSAGES.ERROR.INVALID_DATE_RANGE_FILTERING);
       return events;
     }
 
@@ -171,14 +148,14 @@ export class TimeCalculator {
     return events.filter(event => {
       try {
         if (!isValidDate(event.date)) {
-          console.warn('[Time Calculator] Skipping event with invalid date:', event);
+          console.warn(MESSAGES.ERROR.SKIPPING_INVALID_DATE, event);
           return false;
         }
 
         const eventDate = normalizeDate(event.date!);
         return eventDate >= normalizedStart && eventDate <= normalizedEnd;
       } catch (error) {
-        console.error('[Time Calculator] Error filtering event:', error, event);
+        console.error(MESSAGES.ERROR.ERROR_FILTERING_EVENT, error, event);
         return false;
       }
     });

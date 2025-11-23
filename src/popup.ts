@@ -3,6 +3,9 @@
  * Displays calendar summary when extension icon is clicked
  */
 
+import { RETRY_CONSTANTS, UI_CONSTANTS } from './constants/ui-constants';
+import { MESSAGES } from './constants/messages';
+
 type GroupingMode = 'byName' | 'byColor';
 
 interface ActivitySummary {
@@ -35,12 +38,12 @@ function formatDateRange(start: string, end: string): string {
  */
 function renderSummaryList(summaries: ActivitySummary[]): string {
   if (summaries.length === 0) {
-    return '<p class="no-activities">No activities found</p>';
+    return `<p class="${UI_CONSTANTS.CSS_CLASSES.NO_ACTIVITIES}">${MESSAGES.UI.NO_ACTIVITIES}</p>`;
   }
 
   const items = summaries.map(summary => {
-    const borderColor = summary.color || '#4285f4';
-    const durationColor = summary.color || '#4285f4';
+    const borderColor = summary.color || UI_CONSTANTS.DEFAULT_BORDER_COLOR;
+    const durationColor = summary.color || UI_CONSTANTS.DEFAULT_BORDER_COLOR;
     return `
     <div class="activity-item" style="border-left-color: ${borderColor};">
       <div class="activity-header">
@@ -48,7 +51,7 @@ function renderSummaryList(summaries: ActivitySummary[]): string {
         <span class="activity-duration" style="color: ${durationColor};">${summary.formattedDuration}</span>
       </div>
       <div class="activity-count">
-        ${summary.count} occurrence${summary.count !== 1 ? 's' : ''}
+        ${summary.count} ${summary.count !== 1 ? MESSAGES.UI.OCCURRENCES : MESSAGES.UI.OCCURRENCE}
       </div>
     </div>
   `;
@@ -59,9 +62,9 @@ function renderSummaryList(summaries: ActivitySummary[]): string {
 
   return `
     ${items}
-    <div class="total-section">
-      <span class="total-label">Total</span>
-      <span class="total-duration">${totalFormatted}</span>
+    <div class="${UI_CONSTANTS.CSS_CLASSES.TOTAL_SECTION}">
+      <span class="${UI_CONSTANTS.CSS_CLASSES.TOTAL_LABEL}">${MESSAGES.UI.TOTAL}</span>
+      <span class="${UI_CONSTANTS.CSS_CLASSES.TOTAL_DURATION}">${totalFormatted}</span>
     </div>
   `;
 }
@@ -167,13 +170,13 @@ function requestSummary(groupingMode: GroupingMode = currentGroupingMode): void 
       updatePopup({
         summaries: [],
         dateRange: null,
-        error: 'Please navigate to Google Calendar (calendar.google.com) and open this popup again.'
+        error: MESSAGES.ERROR.NOT_CALENDAR_PAGE
       });
       return;
     }
 
       // Send message with retry mechanism and increasing delays
-      const sendMessageWithRetry = (retries = 5, delay = 300): void => {
+      const sendMessageWithRetry = (retries = RETRY_CONSTANTS.MAX_RETRIES, delay = RETRY_CONSTANTS.INITIAL_DELAY_MS): void => {
         chrome.tabs.sendMessage(tabId, { action: 'getSummary', groupingMode }, (response: SummaryData) => {
           if (chrome.runtime.lastError) {
             const errorMsg = chrome.runtime.lastError.message || '';
@@ -183,7 +186,7 @@ function requestSummary(groupingMode: GroupingMode = currentGroupingMode): void 
                 errorMsg.includes('Could not establish connection')) {
               
               if (retries > 0) {
-                const nextDelay = Math.min(delay * 1.5, 2000); // Increase delay up to 2 seconds
+                const nextDelay = Math.min(delay * RETRY_CONSTANTS.DELAY_MULTIPLIER, RETRY_CONSTANTS.MAX_DELAY_MS);
                 setTimeout(() => sendMessageWithRetry(retries - 1, nextDelay), nextDelay);
                 return;
               }
@@ -192,7 +195,7 @@ function requestSummary(groupingMode: GroupingMode = currentGroupingMode): void 
               updatePopup({
                 summaries: [],
                 dateRange: null,
-                error: 'Content script is not loaded. Please refresh the page (F5) and wait a few seconds before opening this popup again.'
+                error: MESSAGES.ERROR.CONTENT_SCRIPT_NOT_LOADED
               });
               return;
             }
@@ -206,7 +209,7 @@ function requestSummary(groupingMode: GroupingMode = currentGroupingMode): void 
             updatePopup({
               summaries: [],
               dateRange: null,
-              error: 'Could not connect to Google Calendar page. Please refresh the page (F5) and try again.'
+              error: MESSAGES.ERROR.CONNECTION_FAILED
             });
             return;
           }

@@ -7,6 +7,7 @@ import { PageDetector } from './page-detector';
 import { EventParser } from './event-parser';
 import { TimeCalculator, GroupingMode } from './time-calculator';
 import { isValidDate } from './date-utils';
+import { MESSAGES } from './constants/messages';
 
 /**
  * Main application class
@@ -45,7 +46,7 @@ class CalendarSummaryApp {
         return {
           summaries: [],
           dateRange: null,
-          error: `Error detecting page: ${error instanceof Error ? error.message : String(error)}`
+          error: `${MESSAGES.ERROR.DETECTING_PAGE}: ${error instanceof Error ? error.message : String(error)}`
         };
       }
 
@@ -53,7 +54,7 @@ class CalendarSummaryApp {
         return {
           summaries: [],
           dateRange: null,
-          error: 'Please navigate to Google Calendar and select a calendar view.'
+          error: MESSAGES.ERROR.INVALID_PAGE
         };
       }
 
@@ -79,7 +80,7 @@ class CalendarSummaryApp {
             }
             return true;
           } catch (error) {
-            console.warn('[Calendar Summary] Error validating event:', error, event);
+            console.warn(MESSAGES.ERROR.ERROR_VALIDATING_EVENT, error, event);
             return false;
           }
         });
@@ -88,7 +89,7 @@ class CalendarSummaryApp {
         return {
           summaries: [],
           dateRange: null,
-          error: `Error parsing events: ${error instanceof Error ? error.message : String(error)}`
+          error: `${MESSAGES.ERROR.PARSING_EVENTS}: ${error instanceof Error ? error.message : String(error)}`
         };
       }
       
@@ -104,7 +105,7 @@ class CalendarSummaryApp {
             // Continue without filtering
           }
         } else {
-          console.warn('[Calendar Summary] Skipping date range filter due to invalid dates');
+          console.warn(MESSAGES.ERROR.INVALID_DATE_RANGE);
         }
       }
 
@@ -117,7 +118,7 @@ class CalendarSummaryApp {
         return {
           summaries: [],
           dateRange: null,
-          error: `Error calculating summaries: ${error instanceof Error ? error.message : String(error)}`
+          error: `${MESSAGES.ERROR.CALCULATING_SUMMARIES}: ${error instanceof Error ? error.message : String(error)}`
         };
       }
 
@@ -136,7 +137,7 @@ class CalendarSummaryApp {
             dateRange = null;
           }
         } else {
-          console.warn('[Calendar Summary] Invalid date range detected:', { start, end });
+          console.warn(MESSAGES.ERROR.INVALID_DATE_RANGE, { start, end });
         }
       }
 
@@ -156,7 +157,7 @@ class CalendarSummaryApp {
       return {
         summaries: [],
         dateRange: null,
-        error: `Error parsing calendar: ${error instanceof Error ? error.message : String(error)}`
+          error: `${MESSAGES.ERROR.PARSING_EVENTS}: ${error instanceof Error ? error.message : String(error)}`
       };
     }
   }

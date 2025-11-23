@@ -4,6 +4,11 @@
 
 import { CalendarEvent } from './types';
 import { isValidDate, normalizeDate, createNormalizedDate } from './date-utils';
+import { DOM_SELECTORS, DOM_ATTRIBUTES, CSS_CLASSES } from './constants/dom-selectors';
+import { DATE_CONSTANTS, RUSSIAN_MONTHS } from './constants/date-constants';
+import { REGEX_PATTERNS, TEXT_SEPARATORS } from './constants/regex-patterns';
+import { COLOR_MAP, COLOR_NAMES, DEFAULT_COLOR, DEFAULT_COLOR_NAME } from './constants/colors';
+import { MESSAGES } from './constants/messages';
 
 /**
  * Service for parsing calendar events from the page
@@ -17,7 +22,7 @@ export class EventParser {
     const events: CalendarEvent[] = [];
 
     // Strategy 1: Look for event containers with data-eventid (most reliable)
-    const eventElements = document.querySelectorAll('[data-eventid]');
+    const eventElements = document.querySelectorAll(DOM_SELECTORS.EVENT_BY_ID);
     eventElements.forEach((element) => {
       const event = this.parseEventElement(element as HTMLElement);
       if (event) {
@@ -27,7 +32,7 @@ export class EventParser {
 
     // Strategy 2: Look for event buttons in grid cells
     if (events.length === 0) {
-      const gridEvents = document.querySelectorAll('[role="gridcell"] [role="button"][aria-label]');
+      const gridEvents = document.querySelectorAll(DOM_SELECTORS.GRID_EVENTS);
       gridEvents.forEach(element => {
         const event = this.parseEventElement(element as HTMLElement);
         if (event) events.push(event);
@@ -36,7 +41,7 @@ export class EventParser {
 
     // Strategy 3: Look for elements with event-related classes
     if (events.length === 0) {
-      const classEvents = document.querySelectorAll('.event-container, .event, [class*="event"]');
+      const classEvents = document.querySelectorAll(DOM_SELECTORS.EVENT_CONTAINERS);
       classEvents.forEach(element => {
         const event = this.parseEventElement(element as HTMLElement);
         if (event) events.push(event);
@@ -63,23 +68,23 @@ export class EventParser {
       
       while (searchElement && (!timeText || !ariaLabel)) {
         if (!timeText) {
-          const timeElement = searchElement.querySelector('[data-time]') ||
-                             searchElement.querySelector('.event-time') ||
-                             searchElement.querySelector('[class*="time"]');
+          const timeElement = searchElement.querySelector(DOM_SELECTORS.TIME_ELEMENT) ||
+                             searchElement.querySelector(DOM_SELECTORS.EVENT_TIME_CLASS) ||
+                             searchElement.querySelector(DOM_SELECTORS.TIME_CLASS_PATTERN);
           
           const candidate = timeElement?.textContent?.trim() || 
-                           searchElement.getAttribute('aria-label') ||
-                           searchElement.getAttribute('title') ||
+                           searchElement.getAttribute(DOM_ATTRIBUTES.ARIA_LABEL) ||
+                           searchElement.getAttribute(DOM_ATTRIBUTES.TITLE) ||
                            searchElement.textContent?.trim() ||
                            '';
           
-          if (candidate && (candidate.match(/\d{1,2}:\d{2}/) || candidate.match(/[Сс]\s*\d{1,2}:\d{2}/))) {
+          if (candidate && (REGEX_PATTERNS.TIME_IN_TEXT.test(candidate) || REGEX_PATTERNS.RUSSIAN_TIME_IN_TEXT.test(candidate))) {
             timeText = candidate;
           }
         }
         
         if (!ariaLabel) {
-          const candidate = searchElement.getAttribute('aria-label') || '';
+          const candidate = searchElement.getAttribute(DOM_ATTRIBUTES.ARIA_LABEL) || '';
           if (candidate) {
             ariaLabel = candidate;
           }
@@ -95,17 +100,17 @@ export class EventParser {
       if (!title) {
         let current: HTMLElement | null = element;
         while (current && !title) {
-          const dataTitle = current.getAttribute('data-event-title');
+          const dataTitle = current.getAttribute(DOM_ATTRIBUTES.DATA_EVENT_TITLE);
           if (dataTitle) {
             title = dataTitle;
             break;
           }
           
-          const titleElement = current.querySelector('[data-event-title]') ||
-                              current.querySelector('.event-title');
+          const titleElement = current.querySelector(DOM_SELECTORS.EVENT_TITLE_ATTR) ||
+                              current.querySelector(DOM_SELECTORS.EVENT_TITLE_CLASS);
           if (titleElement) {
             title = titleElement.textContent?.trim() || 
-                    titleElement.getAttribute('title') ||
+                    titleElement.getAttribute(DOM_ATTRIBUTES.TITLE) ||
                     '';
             if (title) break;
           }
@@ -279,8 +284,8 @@ export class EventParser {
     }
     
     // If text contains comma, split and process parts
-    if (text.includes(',')) {
-      const parts = text.split(',');
+    if (text.includes(TEXT_SEPARATORS[0])) {
+      const parts = text.split(TEXT_SEPARATORS[0]);
       if (parts.length < 2) {
         return null;
       }
@@ -297,16 +302,16 @@ export class EventParser {
     
     // Try to extract from patterns like "Title10:00–13:00" or "Title, 10:00"
     // Remove time patterns and see what's left
+    const russianDatePattern = new RegExp(`\\d{1,2}\\s+(${RUSSIAN_MONTHS.join('|')})\\s+\\d{4}`, 'gi');
     const withoutTime = text
-      .replace(/[Сс]\s*\d{1,2}:\d{2}\s+до\s+\d{1,2}:\d{2}/g, '')
+      .replace(REGEX_PATTERNS.RUSSIAN_TIME_FORMAT, '')
       .replace(/\d{1,2}:\d{2}–\d{1,2}:\d{2}/g, '')
-      .replace(/\d{1,2}:\d{2}/g, '')
-      .replace(/\d{1,2}\s+(января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)\s+\d{4}/gi, '')
+      .replace(REGEX_PATTERNS.TIME_FORMAT, '')
+      .replace(russianDatePattern, '')
       .trim();
     
     // Split by common separators and try each part
-    const separators = [',', ' ', '•', '·'];
-    for (const sep of separators) {
+    for (const sep of TEXT_SEPARATORS) {
       if (withoutTime.includes(sep)) {
         const parts = withoutTime.split(sep);
         for (const part of parts) {
@@ -335,29 +340,27 @@ export class EventParser {
     }
     
     // Reject generic titles
-    if (candidate.match(/^\d+\s*мероприяти[ея]$/i)) {
+    if (REGEX_PATTERNS.GENERIC_TITLE_PATTERN.test(candidate)) {
       return false;
     }
     
     // Reject time patterns
-    if (candidate.match(/^[Сс]\s*\d{1,2}:\d{2}/) ||
-        candidate.match(/^\d{1,2}:\d{2}/) ||
-        candidate.match(/^\d{1,2}:\d{2}–\d{1,2}:\d{2}/)) {
+    if (REGEX_PATTERNS.RUSSIAN_TIME_IN_TEXT.test(candidate) ||
+        REGEX_PATTERNS.TIME_IN_TEXT.test(candidate) ||
+        /^\d{1,2}:\d{2}–\d{1,2}:\d{2}/.test(candidate)) {
       return false;
     }
     
     // Reject metadata
+    const russianDatePattern = new RegExp(`\\d{1,2}\\s+(${RUSSIAN_MONTHS.join('|')})\\s+\\d{4}`, 'i');
     if (candidate.includes('Место') ||
         candidate.includes('цвет') ||
-        candidate.match(/\d{1,2}\s+(января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)\s+\d{4}/i)) {
+        russianDatePattern.test(candidate)) {
       return false;
     }
     
     // Reject single characters
-    if (candidate === 'С' || 
-        candidate === 'с' ||
-        candidate.match(/^[А-ЯЁа-яё]$/) ||
-        candidate.match(/^[A-Za-z]$/)) {
+    if (REGEX_PATTERNS.SINGLE_CHARACTER.test(candidate)) {
       return false;
     }
     
@@ -377,7 +380,7 @@ export class EventParser {
       if (!(current instanceof HTMLElement)) continue;
       
       // Method 1: Check for data-color-id or data-color attribute
-      const dataColorId = current.getAttribute('data-color-id');
+      const dataColorId = current.getAttribute(DOM_ATTRIBUTES.DATA_COLOR_ID);
       if (dataColorId) {
         const color = this.getColorFromId(dataColorId);
         if (color) {
@@ -385,7 +388,7 @@ export class EventParser {
         }
       }
       
-      const dataColor = current.getAttribute('data-color');
+      const dataColor = current.getAttribute(DOM_ATTRIBUTES.DATA_COLOR);
       if (dataColor) {
         return dataColor;
       }
@@ -439,7 +442,7 @@ export class EventParser {
       }
       
       // Method 4: Check inline style attribute
-      const inlineStyle = current.getAttribute('style');
+      const inlineStyle = current.getAttribute(DOM_ATTRIBUTES.STYLE);
       if (inlineStyle) {
         // Try background-color, border-color, border-left-color, etc.
         const bgMatch = inlineStyle.match(/background(?:-color)?:\s*([^;]+)/i);
@@ -462,8 +465,9 @@ export class EventParser {
     // Method 5: Check parent elements
     let current: HTMLElement | null = element.parentElement;
     let depth = 0;
-    while (current && depth < 3) { // Limit depth to avoid going too far up
-      const dataColorId = current.getAttribute('data-color-id');
+    const MAX_PARENT_DEPTH = 3;
+    while (current && depth < MAX_PARENT_DEPTH) {
+      const dataColorId = current.getAttribute(DOM_ATTRIBUTES.DATA_COLOR_ID);
       if (dataColorId) {
         const color = this.getColorFromId(dataColorId);
         if (color) {
@@ -560,31 +564,7 @@ export class EventParser {
     // Normalize color ID (remove leading zeros, handle string/number)
     const normalizedId = String(parseInt(colorId, 10));
     
-    const colorMap: { [key: string]: string } = {
-      '1': '#a4bdfc', // Lavender
-      '2': '#7ae7bf', // Sage
-      '3': '#dbadff', // Grape
-      '4': '#ff887c', // Flamingo
-      '5': '#fbd75b', // Banana
-      '6': '#ffb878', // Tangerine
-      '7': '#46d6db', // Peacock
-      '8': '#e1e1e1', // Graphite
-      '9': '#5484ed', // Blueberry
-      '10': '#51b749', // Basil
-      '11': '#dc2127', // Tomato
-      // Additional colors that might be used
-      '12': '#ff9800', // Orange
-      '13': '#9c27b0', // Purple
-      '14': '#00bcd4', // Cyan
-      '15': '#4caf50', // Green
-      '16': '#f44336', // Red
-      '17': '#2196f3', // Blue
-      '18': '#ffc107', // Amber
-      '19': '#795548', // Brown
-      '20': '#607d8b', // Blue Grey
-    };
-    
-    return colorMap[normalizedId] || null;
+    return COLOR_MAP[normalizedId] || null;
   }
 
   /**
@@ -593,15 +573,14 @@ export class EventParser {
   private extractDateFromTimeText(timeText: string): Date | null {
     if (!timeText) return null;
     
-    // Try to find Russian date pattern: "26 ноября 2025"
-    const russianDateMatch = timeText.match(/(\d{1,2})\s+(января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)\s+(\d{4})/i);
+    // Try to find Russian date pattern
+    const russianDateMatch = timeText.match(REGEX_PATTERNS.RUSSIAN_DATE);
     if (russianDateMatch) {
       const day = parseInt(russianDateMatch[1]);
-      const monthNames = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 
-                         'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
-      const month = monthNames.findIndex(m => m.toLowerCase() === russianDateMatch[2].toLowerCase());
+      const month = RUSSIAN_MONTHS.findIndex(m => m.toLowerCase() === russianDateMatch[2].toLowerCase());
       const year = parseInt(russianDateMatch[3]);
-      if (month >= 0 && day > 0 && day <= 31 && year > 1900 && year < 2100) {
+      if (month >= 0 && day > 0 && day <= DATE_CONSTANTS.MAX_DAY_IN_MONTH && 
+          year >= DATE_CONSTANTS.MIN_YEAR && year <= DATE_CONSTANTS.MAX_YEAR) {
         const date = new Date(year, month, day);
         const normalized = normalizeDate(date);
         if (isValidDate(normalized)) {
@@ -621,11 +600,11 @@ export class EventParser {
     let current: HTMLElement | null = element;
     while (current) {
       // Try data-date first (most reliable)
-      const dataDate = current.getAttribute('data-date');
+      const dataDate = current.getAttribute(DOM_ATTRIBUTES.DATA_DATE);
       if (dataDate) {
         let date: Date | null = null;
         // Try parsing as ISO string or YYYY-MM-DD
-        if (dataDate.match(/^\d{4}-\d{2}-\d{2}/)) {
+        if (REGEX_PATTERNS.ISO_DATE.test(dataDate)) {
           const parts = dataDate.split('-');
           date = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
         } else {
@@ -637,9 +616,9 @@ export class EventParser {
       }
       
       // Try other attributes
-      const dateAttr = current.getAttribute('data-day') ||
-                      current.getAttribute('data-start-time') ||
-                      current.getAttribute('aria-label');
+      const dateAttr = current.getAttribute(DOM_ATTRIBUTES.DATA_DAY) ||
+                      current.getAttribute(DOM_ATTRIBUTES.DATA_START_TIME) ||
+                      current.getAttribute(DOM_ATTRIBUTES.ARIA_LABEL);
       
       if (dateAttr) {
         const parsed = this.parseDateString(dateAttr);
@@ -653,7 +632,7 @@ export class EventParser {
     
     // Try to find date from week view column headers
     // Look for the column header that contains this event
-    const weekColumns = document.querySelectorAll('[role="columnheader"][data-date]');
+    const weekColumns = document.querySelectorAll(DOM_SELECTORS.WEEK_COLUMNS);
     if (weekColumns.length > 0) {
       // Find which column the event is in by checking position
       const eventRect = element.getBoundingClientRect();
@@ -661,10 +640,10 @@ export class EventParser {
         const colRect = col.getBoundingClientRect();
         // Check if event is in this column (horizontally)
         if (eventRect.left >= colRect.left && eventRect.left <= colRect.right) {
-          const dateStr = col.getAttribute('data-date');
+          const dateStr = col.getAttribute(DOM_ATTRIBUTES.DATA_DATE);
           if (dateStr) {
             let date: Date | null = null;
-            if (dateStr.match(/^\d{4}-\d{2}-\d{2}/)) {
+            if (REGEX_PATTERNS.ISO_DATE.test(dateStr)) {
               const parts = dateStr.split('-');
               date = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
             } else {
@@ -718,15 +697,14 @@ export class EventParser {
         return tomorrow;
       }
 
-      // Try parsing Russian date format like "30 ноября 2025"
-      const russianDateMatch = dateStr.match(/(\d{1,2})\s+(января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)\s+(\d{4})/i);
+      // Try parsing Russian date format
+      const russianDateMatch = dateStr.match(REGEX_PATTERNS.RUSSIAN_DATE);
       if (russianDateMatch) {
         const day = parseInt(russianDateMatch[1]);
-        const monthNames = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 
-                           'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
-        const month = monthNames.findIndex(m => m.toLowerCase() === russianDateMatch[2].toLowerCase());
+        const month = RUSSIAN_MONTHS.findIndex(m => m.toLowerCase() === russianDateMatch[2].toLowerCase());
         const year = parseInt(russianDateMatch[3]);
-        if (month >= 0 && day > 0 && day <= 31 && year > 1900 && year < 2100) {
+        if (month >= 0 && day > 0 && day <= DATE_CONSTANTS.MAX_DAY_IN_MONTH && 
+            year >= DATE_CONSTANTS.MIN_YEAR && year <= DATE_CONSTANTS.MAX_YEAR) {
           const date = new Date(year, month, day);
           const normalized = normalizeDate(date);
           if (isValidDate(normalized)) {
@@ -747,8 +725,8 @@ export class EventParser {
    */
   private parseTime(timeText: string, element: HTMLElement): { startMinutes: number | null; endMinutes: number | null } {
     // Try to get from data attributes first
-    const startTime = element.getAttribute('data-start-time');
-    const endTime = element.getAttribute('data-end-time');
+    const startTime = element.getAttribute(DOM_ATTRIBUTES.DATA_START_TIME);
+    const endTime = element.getAttribute(DOM_ATTRIBUTES.DATA_END_TIME);
 
     if (startTime && endTime) {
       return {
@@ -757,21 +735,21 @@ export class EventParser {
       };
     }
 
-    // Parse Russian format: "С 13:00 до 13:30" or "с 13:00 до 13:30"
-    const russianMatch = timeText.match(/[Сс]\s*(\d{1,2}):(\d{2})\s+до\s+(\d{1,2}):(\d{2})/i);
+    // Parse Russian format
+    const russianMatch = timeText.match(REGEX_PATTERNS.RUSSIAN_TIME_FORMAT);
     if (russianMatch) {
       const startHour = parseInt(russianMatch[1]);
       const startMin = parseInt(russianMatch[2]);
       const endHour = parseInt(russianMatch[3]);
       const endMin = parseInt(russianMatch[4]);
 
-      const startMinutes = startHour * 60 + startMin;
-      const endMinutes = endHour * 60 + endMin;
+      const startMinutes = startHour * DATE_CONSTANTS.MINUTES_IN_HOUR + startMin;
+      const endMinutes = endHour * DATE_CONSTANTS.MINUTES_IN_HOUR + endMin;
       return { startMinutes, endMinutes };
     }
 
     // Parse from text like "9:30 AM - 10:00 AM" or "09:30-10:00"
-    const timeMatch = timeText.match(/(\d{1,2}):(\d{2})\s*(AM|PM)?.*?(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
+    const timeMatch = timeText.match(REGEX_PATTERNS.TIME_WITH_AMPM);
     if (timeMatch) {
       const startHour = parseInt(timeMatch[1]);
       const startMin = parseInt(timeMatch[2]);
@@ -786,16 +764,16 @@ export class EventParser {
     }
 
     // Try to parse from aria-label or title (any format with two times)
-    const ariaLabel = element.getAttribute('aria-label') || '';
-    const ariaMatch = ariaLabel.match(/(\d{1,2}):(\d{2}).*?(\d{1,2}):(\d{2})/);
+    const ariaLabel = element.getAttribute(DOM_ATTRIBUTES.ARIA_LABEL) || '';
+    const ariaMatch = ariaLabel.match(REGEX_PATTERNS.TIME_FORMAT);
     if (ariaMatch) {
       const startHour = parseInt(ariaMatch[1]);
       const startMin = parseInt(ariaMatch[2]);
       const endHour = parseInt(ariaMatch[3]);
       const endMin = parseInt(ariaMatch[4]);
 
-      const startMinutes = startHour * 60 + startMin;
-      const endMinutes = endHour * 60 + endMin;
+      const startMinutes = startHour * DATE_CONSTANTS.MINUTES_IN_HOUR + startMin;
+      const endMinutes = endHour * DATE_CONSTANTS.MINUTES_IN_HOUR + endMin;
       return {
         startMinutes,
         endMinutes
@@ -809,7 +787,7 @@ export class EventParser {
    * Converts time string to minutes since midnight
    */
   private timeToMinutes(timeStr: string): number | null {
-    const match = timeStr.match(/(\d{1,2}):(\d{2})/);
+    const match = timeStr.match(REGEX_PATTERNS.TIME_FORMAT);
     if (match) {
       const hour = parseInt(match[1]);
       const min = parseInt(match[2]);
@@ -828,7 +806,7 @@ export class EventParser {
     } else if (amPm === 'AM' && hour === 12) {
       h24 = 0;
     }
-    return h24 * 60 + minute;
+    return h24 * DATE_CONSTANTS.MINUTES_IN_HOUR + minute;
   }
 
   /**
@@ -836,10 +814,10 @@ export class EventParser {
    */
   private parseFromTimeSlots(events: CalendarEvent[]): void {
     // Google Calendar has time slots in the grid
-    const timeSlots = document.querySelectorAll('[data-hour]');
+    const timeSlots = document.querySelectorAll(DOM_SELECTORS.TIME_SLOTS);
     timeSlots.forEach(slot => {
-      const hour = parseInt(slot.getAttribute('data-hour') || '0');
-      const eventsInSlot = slot.querySelectorAll('[role="button"]');
+      const hour = parseInt(slot.getAttribute(DOM_ATTRIBUTES.DATA_HOUR) || '0');
+      const eventsInSlot = slot.querySelectorAll(DOM_SELECTORS.EVENTS_IN_SLOT);
       
       eventsInSlot.forEach(eventEl => {
         const event = this.parseEventElement(eventEl as HTMLElement);

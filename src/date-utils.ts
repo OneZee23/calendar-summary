@@ -2,6 +2,8 @@
  * Utility functions for date validation and manipulation
  */
 
+import { DATE_CONSTANTS } from './constants/date-constants';
+
 /**
  * Validates if a date is valid and within reasonable range
  */
@@ -10,7 +12,7 @@ export function isValidDate(date: Date | null | undefined): boolean {
   if (!(date instanceof Date)) return false;
   if (isNaN(date.getTime())) return false;
   const year = date.getFullYear();
-  return year >= 1900 && year <= 2100;
+  return year >= DATE_CONSTANTS.MIN_YEAR && year <= DATE_CONSTANTS.MAX_YEAR;
 }
 
 /**
