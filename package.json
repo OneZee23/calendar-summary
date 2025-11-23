@@ -1,0 +1,27 @@
+{
+  "name": "calendar-summary",
+  "version": "1.0.0",
+  "description": "Chrome extension to summarize Google Calendar activities",
+  "scripts": {
+    "build": "tsc && yarn bundle && yarn copy-assets",
+    "bundle": "esbuild src/content.ts --bundle --outfile=dist/content.js --format=iife --global-name=CalendarSummary --platform=browser && esbuild src/popup.ts --bundle --outfile=dist/popup.js --format=iife --platform=browser",
+    "copy-assets": "yarn copy-manifest && yarn copy-popup && yarn copy-icons",
+    "copy-manifest": "cp manifest.json dist/",
+    "copy-popup": "cp popup.html dist/",
+    "copy-icons": "mkdir -p dist/icons && cp -r icons/* dist/icons/ 2>/dev/null || true",
+    "watch": "tsc --watch"
+  },
+  "keywords": [
+    "chrome-extension",
+    "google-calendar",
+    "typescript"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/chrome": "^0.0.251",
+    "esbuild": "^0.19.11",
+    "typescript": "^5.3.3"
+  }
+}
+

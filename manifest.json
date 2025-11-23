@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "Calendar Summary",
+  "version": "1.0.0",
+  "description": "Shows a summary of calendar activities with time calculations",
+  "permissions": [
+    "activeTab"
+  ],
+  "host_permissions": [
+    "https://calendar.google.com/*"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Calendar Summary"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://calendar.google.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
+
