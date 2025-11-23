@@ -3,6 +3,7 @@
  */
 
 import { CalendarViewMode, PageDetectionResult } from './types';
+import { isValidDate, normalizeDate, createNormalizedDate } from './date-utils';
 
 /**
  * Service for detecting Google Calendar page state
@@ -68,9 +69,9 @@ export class PageDetector {
       const dateParam = urlParams.get('date');
 
       if (dateParam) {
-        const baseDate = new Date(dateParam);
-        if (!isNaN(baseDate.getTime()) && baseDate.getFullYear() > 1900 && baseDate.getFullYear() < 2100) {
-          return this.calculateRange(baseDate, viewMode);
+        const baseDate = createNormalizedDate(dateParam);
+        if (isValidDate(baseDate)) {
+          return this.calculateRange(baseDate!, viewMode);
         }
       }
 
@@ -81,11 +82,9 @@ export class PageDetector {
         const month = parseInt(urlMatch[3]) - 1; // Month is 0-indexed
         const day = parseInt(urlMatch[4]);
         const baseDate = new Date(year, month, day);
-        if (!isNaN(baseDate.getTime())) {
-          console.log('[Page Detector] Parsed date from URL:', baseDate, 'viewMode:', viewMode);
-          const range = this.calculateRange(baseDate, viewMode);
-          console.log('[Page Detector] Calculated range:', range);
-          return range;
+        const normalized = normalizeDate(baseDate);
+        if (isValidDate(normalized)) {
+          return this.calculateRange(normalized, viewMode);
         }
       }
 
@@ -98,19 +97,19 @@ export class PageDetector {
             const dateStr = el.getAttribute('data-date');
             if (!dateStr) return null;
             
-            // Try parsing as ISO string first
-            let date = new Date(dateStr);
-            // If that fails, try parsing as YYYY-MM-DD
-            if (isNaN(date.getTime()) && dateStr.match(/^\d{4}-\d{2}-\d{2}/)) {
+            let date: Date | null = null;
+            // Try parsing as YYYY-MM-DD first
+            if (dateStr.match(/^\d{4}-\d{2}-\d{2}/)) {
               const parts = dateStr.split('-');
               date = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+            } else {
+              date = createNormalizedDate(dateStr);
             }
             
-            // Validate date
-            if (isNaN(date.getTime()) || date.getFullYear() < 1900 || date.getFullYear() > 2100) {
-              return null;
+            if (isValidDate(date)) {
+              return normalizeDate(date!);
             }
-            return date;
+            return null;
           })
           .filter((d): d is Date => d !== null);
 
@@ -133,30 +132,25 @@ export class PageDetector {
             sunday.setDate(sunday.getDate() + 6);
             sunday.setHours(23, 59, 59, 999);
             
-            if (!isNaN(monday.getTime()) && !isNaN(sunday.getTime()) &&
-                monday.getFullYear() > 1900 && sunday.getFullYear() < 2100) {
-              console.log('[Page Detector] Week range from DOM:', monday, 'to', sunday);
+            if (isValidDate(monday) && isValidDate(sunday)) {
               return { start: monday, end: sunday };
             }
           }
           
           // For other views or fallback
-          const start = new Date(minDate);
-          start.setHours(0, 0, 0, 0);
+          const start = normalizeDate(minDate);
           const end = new Date(maxDate);
           end.setHours(23, 59, 59, 999);
           
-          // Validate result
-          if (!isNaN(start.getTime()) && !isNaN(end.getTime()) &&
-              start.getFullYear() > 1900 && end.getFullYear() < 2100) {
+          if (isValidDate(start) && isValidDate(end)) {
             return { start, end };
           }
         }
       }
 
       // Fallback: use current date and calculate range
-      const today = new Date();
-      if (!isNaN(today.getTime())) {
+      const today = normalizeDate(new Date());
+      if (isValidDate(today)) {
         return this.calculateRange(today, viewMode);
       }
       
@@ -172,13 +166,14 @@ export class PageDetector {
    */
   private calculateRange(baseDate: Date, viewMode: CalendarViewMode): { start: Date; end: Date } {
     // Validate base date
-    if (isNaN(baseDate.getTime()) || baseDate.getFullYear() < 1900 || baseDate.getFullYear() > 2100) {
+    if (!isValidDate(baseDate)) {
       console.warn('[Page Detector] Invalid base date, using today:', baseDate);
-      baseDate = new Date();
+      baseDate = normalizeDate(new Date());
+    } else {
+      baseDate = normalizeDate(baseDate);
     }
 
     let start = new Date(baseDate);
-    start.setHours(0, 0, 0, 0);
 
     let end = new Date(start);
 
@@ -189,21 +184,17 @@ export class PageDetector {
       case CalendarViewMode.WEEK:
         // Get Monday of the week containing baseDate
         const dayOfWeek = start.getDay();
-        console.log('[Page Detector] Base date day of week:', dayOfWeek, 'date:', start);
         // Calculate days to subtract to get to Monday (0=Sunday, 1=Monday, etc.)
         // If Sunday (0), go back 6 days. If Monday (1), no change. If Tuesday (2), go back 1 day, etc.
         const diffToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
-        console.log('[Page Detector] Days to Monday:', diffToMonday);
         const mondayDate = new Date(start);
         mondayDate.setDate(mondayDate.getDate() + diffToMonday);
         mondayDate.setHours(0, 0, 0, 0);
         start = mondayDate;
-        console.log('[Page Detector] Monday date:', start);
         // Sunday is 6 days after Monday
         end = new Date(start);
         end.setDate(end.getDate() + 6);
         end.setHours(23, 59, 59, 999);
-        console.log('[Page Detector] Sunday date:', end);
         break;
       case CalendarViewMode.MONTH:
         end.setMonth(end.getMonth() + 1);
@@ -213,13 +204,10 @@ export class PageDetector {
     }
 
     // Final validation
-    if (isNaN(start.getTime()) || isNaN(end.getTime()) ||
-        start.getFullYear() < 1900 || start.getFullYear() > 2100 ||
-        end.getFullYear() < 1900 || end.getFullYear() > 2100) {
+    if (!isValidDate(start) || !isValidDate(end)) {
       console.error('[Page Detector] Invalid calculated date range:', { start, end });
       // Fallback to current week
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
+      const today = normalizeDate(new Date());
       const dayOfWeek = today.getDay();
       const diff = today.getDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1);
       const fallbackStart = new Date(today);

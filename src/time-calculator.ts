@@ -3,6 +3,15 @@
  */
 
 import { CalendarEvent, ActivitySummary } from './types';
+import { isValidDate, normalizeDate } from './date-utils';
+
+/**
+ * Grouping mode for summaries
+ */
+export enum GroupingMode {
+  BY_NAME = 'byName',
+  BY_COLOR = 'byColor'
+}
 
 /**
  * Service for calculating activity time summaries
@@ -11,40 +20,110 @@ export class TimeCalculator {
   /**
    * Groups events by activity name and calculates totals
    */
-  public calculateSummaries(events: CalendarEvent[]): ActivitySummary[] {
-    // Group events by title (activity name)
+  public calculateSummaries(events: CalendarEvent[], groupingMode: GroupingMode = GroupingMode.BY_NAME): ActivitySummary[] {
     const grouped = new Map<string, CalendarEvent[]>();
 
-    events.forEach(event => {
-      const key = this.normalizeActivityName(event.title);
-      if (!grouped.has(key)) {
-        grouped.set(key, []);
-      }
-      grouped.get(key)!.push(event);
-    });
+    if (groupingMode === GroupingMode.BY_COLOR) {
+      // Group by color
+      events.forEach(event => {
+        // Use color or fallback to "No color"
+        const color = event.color || '#e1e1e1';
+        const key = this.normalizeColor(color);
+        if (!grouped.has(key)) {
+          grouped.set(key, []);
+        }
+        grouped.get(key)!.push(event);
+      });
+    } else {
+      // Group by title (activity name)
+      events.forEach(event => {
+        const key = this.normalizeActivityName(event.title);
+        if (!grouped.has(key)) {
+          grouped.set(key, []);
+        }
+        grouped.get(key)!.push(event);
+      });
+    }
 
     // Calculate summaries
     const summaries: ActivitySummary[] = [];
 
-    grouped.forEach((eventGroup, activityName) => {
+    grouped.forEach((eventGroup, key) => {
       const totalMinutes = eventGroup.reduce((sum, event) => sum + event.duration, 0);
       const count = eventGroup.length;
       const formattedDuration = this.formatDuration(totalMinutes);
       
-      // Use color from first event with this name (or most common color)
-      const color = eventGroup.find(e => e.color)?.color;
+      if (groupingMode === GroupingMode.BY_COLOR) {
+        // For color grouping, use the color as key and create a descriptive name
+        const color = key;
+        const colorName = this.getColorName(color);
+        
+        summaries.push({
+          name: colorName,
+          totalMinutes,
+          count,
+          formattedDuration,
+          color
+        });
+      } else {
+        // For name grouping, use color from first event with this name
+        const color = eventGroup.find(e => e.color)?.color;
 
-      summaries.push({
-        name: activityName,
-        totalMinutes,
-        count,
-        formattedDuration,
-        color
-      });
+        summaries.push({
+          name: key,
+          totalMinutes,
+          count,
+          formattedDuration,
+          color
+        });
+      }
     });
 
     // Sort by total time (descending)
     return summaries.sort((a, b) => b.totalMinutes - a.totalMinutes);
+  }
+  
+  /**
+   * Normalizes color for grouping (rounds similar colors)
+   */
+  private normalizeColor(color: string): string {
+    if (!color) return '#e1e1e1';
+    // Return as-is for now, could implement color rounding if needed
+    return color;
+  }
+  
+  /**
+   * Gets a human-readable name for a color
+   */
+  private getColorName(color: string): string {
+    // Map common colors to names
+    const colorNames: { [key: string]: string } = {
+      '#a4bdfc': 'Lavender',
+      '#7ae7bf': 'Sage',
+      '#dbadff': 'Grape',
+      '#ff887c': 'Flamingo',
+      '#fbd75b': 'Banana',
+      '#ffb878': 'Tangerine',
+      '#46d6db': 'Peacock',
+      '#e1e1e1': 'Graphite',
+      '#5484ed': 'Blueberry',
+      '#51b749': 'Basil',
+      '#dc2127': 'Tomato',
+      '#ff9800': 'Orange',
+      '#9c27b0': 'Purple',
+      '#00bcd4': 'Cyan',
+      '#4caf50': 'Green',
+      '#f44336': 'Red',
+      '#2196f3': 'Blue',
+      '#ffc107': 'Amber',
+      '#795548': 'Brown',
+      '#607d8b': 'Blue Grey',
+    };
+    
+    // Normalize color (uppercase, ensure #)
+    const normalized = color.toUpperCase().startsWith('#') ? color.toUpperCase() : `#${color.toUpperCase()}`;
+    
+    return colorNames[normalized] || `Color ${normalized}`;
   }
 
   /**
@@ -81,41 +160,23 @@ export class TimeCalculator {
     endDate: Date
   ): CalendarEvent[] {
     // Validate input dates
-    if (!startDate || !endDate || 
-        isNaN(startDate.getTime()) || isNaN(endDate.getTime()) ||
-        startDate.getFullYear() < 1900 || endDate.getFullYear() > 2100) {
+    if (!isValidDate(startDate) || !isValidDate(endDate)) {
       console.warn('[Time Calculator] Invalid date range for filtering, returning all events');
       return events;
     }
 
+    const normalizedStart = normalizeDate(startDate);
+    const normalizedEnd = normalizeDate(endDate);
+
     return events.filter(event => {
       try {
-        // Validate event date
-        if (!event.date || isNaN(event.date.getTime()) || 
-            event.date.getFullYear() < 1900 || event.date.getFullYear() > 2100) {
+        if (!isValidDate(event.date)) {
           console.warn('[Time Calculator] Skipping event with invalid date:', event);
           return false;
         }
 
-        const eventDate = new Date(event.date);
-        if (isNaN(eventDate.getTime())) {
-          return false;
-        }
-        eventDate.setHours(0, 0, 0, 0);
-        
-        const start = new Date(startDate);
-        if (isNaN(start.getTime())) {
-          return false;
-        }
-        start.setHours(0, 0, 0, 0);
-        
-        const end = new Date(endDate);
-        if (isNaN(end.getTime())) {
-          return false;
-        }
-        end.setHours(0, 0, 0, 0);
-
-        return eventDate >= start && eventDate <= end;
+        const eventDate = normalizeDate(event.date!);
+        return eventDate >= normalizedStart && eventDate <= normalizedEnd;
       } catch (error) {
         console.error('[Time Calculator] Error filtering event:', error, event);
         return false;

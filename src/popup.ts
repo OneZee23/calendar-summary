@@ -3,6 +3,8 @@
  * Displays calendar summary when extension icon is clicked
  */
 
+type GroupingMode = 'byName' | 'byColor';
+
 interface ActivitySummary {
   name: string;
   totalMinutes: number;
@@ -139,16 +141,16 @@ function updatePopup(data: SummaryData): void {
   }
 }
 
+// Current grouping mode
+let currentGroupingMode: GroupingMode = 'byColor';
+
 /**
  * Requests summary data from content script
  */
-function requestSummary(): void {
-  console.log('[Popup] Requesting summary data...');
-  
+function requestSummary(groupingMode: GroupingMode = currentGroupingMode): void {
   // Get active tab
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     if (!tabs[0] || !tabs[0].id) {
-      console.error('[Popup] No active tab found');
       updatePopup({
         summaries: [],
         dateRange: null,
@@ -162,7 +164,6 @@ function requestSummary(): void {
     
     // Check if we're on Google Calendar
     if (!tab.url || !tab.url.includes('calendar.google.com')) {
-      console.log('[Popup] Not on Google Calendar page');
       updatePopup({
         summaries: [],
         dateRange: null,
@@ -171,16 +172,11 @@ function requestSummary(): void {
       return;
     }
 
-      console.log('[Popup] Sending message to tab:', tabId, 'URL:', tab.url);
-
       // Send message with retry mechanism and increasing delays
       const sendMessageWithRetry = (retries = 5, delay = 300): void => {
-        chrome.tabs.sendMessage(tabId, { action: 'getSummary' }, (response: SummaryData) => {
-          console.log('[Popup] Received response:', response);
-          
+        chrome.tabs.sendMessage(tabId, { action: 'getSummary', groupingMode }, (response: SummaryData) => {
           if (chrome.runtime.lastError) {
             const errorMsg = chrome.runtime.lastError.message || '';
-            console.error('[Popup] Error:', errorMsg);
             
             // If content script is not loaded, increase delay and retry more times
             if (errorMsg.includes('Receiving end does not exist') || 
@@ -188,7 +184,6 @@ function requestSummary(): void {
               
               if (retries > 0) {
                 const nextDelay = Math.min(delay * 1.5, 2000); // Increase delay up to 2 seconds
-                console.log(`[Popup] Content script not ready, retrying in ${nextDelay}ms... (${retries} attempts left)`);
                 setTimeout(() => sendMessageWithRetry(retries - 1, nextDelay), nextDelay);
                 return;
               }
@@ -204,7 +199,6 @@ function requestSummary(): void {
             
             // For other errors, retry with normal delay
             if (retries > 0) {
-              console.log(`[Popup] Retrying... (${retries} attempts left)`);
               setTimeout(() => sendMessageWithRetry(retries - 1, delay), delay);
               return;
             }
@@ -233,10 +227,54 @@ function requestSummary(): void {
   });
 }
 
+/**
+ * Sets up grouping mode toggle buttons
+ */
+function setupGroupingToggle(): void {
+  const byNameBtn = document.getElementById('group-by-name');
+  const byColorBtn = document.getElementById('group-by-color');
+  
+  if (!byNameBtn || !byColorBtn) {
+    return;
+  }
+  
+  const updateButtons = (mode: GroupingMode) => {
+    if (mode === 'byName') {
+      byNameBtn.classList.add('active');
+      byColorBtn.classList.remove('active');
+    } else {
+      byColorBtn.classList.add('active');
+      byNameBtn.classList.remove('active');
+    }
+  };
+  
+  // Set initial state based on current mode
+  updateButtons(currentGroupingMode);
+  
+  byNameBtn.addEventListener('click', () => {
+    currentGroupingMode = 'byName';
+    updateButtons(currentGroupingMode);
+    requestSummary(currentGroupingMode);
+  });
+  
+  byColorBtn.addEventListener('click', () => {
+    currentGroupingMode = 'byColor';
+    updateButtons(currentGroupingMode);
+    requestSummary(currentGroupingMode);
+  });
+  
+  // Initialize button states
+  updateButtons(currentGroupingMode);
+}
+
 // Initialize popup when DOM is ready
 if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', requestSummary);
+  document.addEventListener('DOMContentLoaded', () => {
+    setupGroupingToggle();
+    requestSummary();
+  });
 } else {
+  setupGroupingToggle();
   requestSummary();
 }
 

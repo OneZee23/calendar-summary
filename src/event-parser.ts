@@ -3,6 +3,7 @@
  */
 
 import { CalendarEvent } from './types';
+import { isValidDate, normalizeDate, createNormalizedDate } from './date-utils';
 
 /**
  * Service for parsing calendar events from the page
@@ -13,34 +14,20 @@ export class EventParser {
    * Google Calendar's DOM structure can vary, so we use multiple strategies
    */
   public parseEvents(): CalendarEvent[] {
-    console.log('[Event Parser] Starting to parse events...');
     const events: CalendarEvent[] = [];
 
     // Strategy 1: Look for event containers with data-eventid (most reliable)
     const eventElements = document.querySelectorAll('[data-eventid]');
-    console.log('[Event Parser] Strategy 1: Found', eventElements.length, 'elements with data-eventid');
-    if (eventElements.length > 0) {
-      console.log('[Event Parser] Sample event element:', eventElements[0]);
-      console.log('[Event Parser] Sample event element classes:', eventElements[0].className);
-      console.log('[Event Parser] Sample event element attributes:', Array.from(eventElements[0].attributes).map(a => `${a.name}="${a.value}"`));
-    }
-    eventElements.forEach((element, index) => {
-      if (index < 3) { // Log first 3 for debugging
-        console.log(`[Event Parser] Parsing element ${index}:`, element);
-      }
+    eventElements.forEach((element) => {
       const event = this.parseEventElement(element as HTMLElement);
       if (event) {
         events.push(event);
-        if (events.length <= 3) { // Log first 3 parsed events
-          console.log('[Event Parser] Successfully parsed event:', event);
-        }
       }
     });
 
     // Strategy 2: Look for event buttons in grid cells
     if (events.length === 0) {
       const gridEvents = document.querySelectorAll('[role="gridcell"] [role="button"][aria-label]');
-      console.log('[Event Parser] Strategy 2: Found', gridEvents.length, 'grid cell buttons');
       gridEvents.forEach(element => {
         const event = this.parseEventElement(element as HTMLElement);
         if (event) events.push(event);
@@ -50,7 +37,6 @@ export class EventParser {
     // Strategy 3: Look for elements with event-related classes
     if (events.length === 0) {
       const classEvents = document.querySelectorAll('.event-container, .event, [class*="event"]');
-      console.log('[Event Parser] Strategy 3: Found', classEvents.length, 'elements with event classes');
       classEvents.forEach(element => {
         const event = this.parseEventElement(element as HTMLElement);
         if (event) events.push(event);
@@ -58,11 +44,9 @@ export class EventParser {
     }
 
     // Strategy 4: Parse from time slots (for week/day views)
-    console.log('[Event Parser] Strategy 4: Parsing from time slots...');
     this.parseFromTimeSlots(events);
 
     const deduplicated = this.deduplicateEvents(events);
-    console.log('[Event Parser] Final result:', deduplicated.length, 'events after deduplication');
     return deduplicated;
   }
 
@@ -151,13 +135,10 @@ export class EventParser {
       
       // If we got a generic title, try to extract real title from timeText/ariaLabel
       if (title && title.match(/^\d+\s*мероприяти[ея]$/i)) {
-        console.log('[Event Parser] Found generic title, extracting real title:', title);
-        
         // First, try to extract from timeText/ariaLabel
         const realTitle = this.extractTitleFromText(timeText || ariaLabel);
         if (realTitle && !realTitle.match(/^\d+\s*мероприяти[ея]$/i)) {
           title = realTitle;
-          console.log('[Event Parser] Extracted real title from timeText/ariaLabel:', title);
         } else {
           // Try to find title in all text nodes of element and its parents
           let foundTitle = false;
@@ -196,7 +177,6 @@ export class EventParser {
               if (extracted && !extracted.match(/^\d+\s*мероприяти[ея]$/i)) {
                 title = extracted;
                 foundTitle = true;
-                console.log('[Event Parser] Extracted title from text node:', title);
                 break;
               }
               
@@ -215,7 +195,6 @@ export class EventParser {
                   !trimmed.match(/^[A-Z][a-z]+\s+[A-Z][a-z]+$/)) {
                 title = trimmed;
                 foundTitle = true;
-                console.log('[Event Parser] Found valid title in text node:', title);
                 break;
               }
             }
@@ -229,7 +208,6 @@ export class EventParser {
               if (parentExtracted && !parentExtracted.match(/^\d+\s*мероприяти[ея]$/i)) {
                 title = parentExtracted;
                 foundTitle = true;
-                console.log('[Event Parser] Extracted title from parent:', title);
                 break;
               }
             }
@@ -245,17 +223,12 @@ export class EventParser {
           title.match(/^\d+\s*мероприяти[ея]$/i) ||
           title === 'С' || 
           title === 'с') {
-        console.log('[Event Parser] Skipping event with generic/invalid title:', title);
         return null;
       }
 
-      console.log('[Event Parser] Parsing event:', title);
-      
-      console.log('[Event Parser] Time text found:', timeText);
-
-      // Try to extract date from time text first (it often contains date like "26 ноября 2025")
+      // Try to extract date from time text first (it often contains date)
       let date = this.extractDateFromTimeText(timeText);
-      if (!date || isNaN(date.getTime())) {
+      if (!isValidDate(date)) {
         date = this.extractDate(element);
       }
 
@@ -263,29 +236,24 @@ export class EventParser {
       const { startMinutes, endMinutes } = this.parseTime(timeText, element);
 
       if (startMinutes === null || endMinutes === null) {
-        console.log('[Event Parser] Could not parse time for event:', title);
         return null;
       }
 
       if (endMinutes <= startMinutes) {
-        console.log('[Event Parser] Invalid time range:', startMinutes, endMinutes);
         return null;
       }
 
       const duration = endMinutes - startMinutes;
       
-      // Validate date
-      if (isNaN(date.getTime()) || date.getFullYear() < 1900 || date.getFullYear() > 2100) {
-        console.log('[Event Parser] Invalid date, using today:', date);
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        date = today;
+      // Validate date, fallback to today if invalid
+      if (!date || !isValidDate(date)) {
+        date = normalizeDate(new Date());
+      } else {
+        date = normalizeDate(date);
       }
 
       // Extract color from element
       const color = this.extractColor(element);
-
-      console.log('[Event Parser] Event parsed successfully:', { title, startMinutes, endMinutes, duration, date, color });
 
       return {
         title,
@@ -302,8 +270,8 @@ export class EventParser {
   }
 
   /**
-   * Extracts title from text (e.g., "С 12:00 до 12:15, Daily iMe, Никита Шевелев, ...")
-   * Also handles formats like "Daily iMe, 12:00" or "Arbeit iMe10:00–13:00"
+   * Extracts title from text (e.g., "С 12:00 до 12:15, Event Title, ...")
+   * Also handles formats like "Event Title, 12:00" or "Title10:00–13:00"
    */
   private extractTitleFromText(text: string): string | null {
     if (!text) {
@@ -393,18 +361,7 @@ export class EventParser {
       return false;
     }
     
-    // Reject full names (two words, both capitalized)
-    // But allow if it's a known activity name pattern
-    if (candidate.match(/^[А-ЯЁ][а-яё]+\s+[А-ЯЁ][а-яё]+$/) ||
-        candidate.match(/^[A-Z][a-z]+\s+[A-Z][a-z]+$/)) {
-      // Allow if it contains common activity words
-      const activityWords = ['Arbeit', 'Frühstück', 'Mittagessen', 'Abendessen', 'Daily', 'Weekly', 'Planning', 'Подъем', 'Поездка', 'Психолог', 'Подолог'];
-      const hasActivityWord = activityWords.some(word => candidate.includes(word));
-      if (!hasActivityWord) {
-        return false;
-      }
-    }
-    
+    // Accept all valid titles (don't filter out two-word titles as they might be valid activity names)
     return true;
   }
 
@@ -413,78 +370,121 @@ export class EventParser {
    * Google Calendar uses various methods: CSS classes, data attributes, inline styles
    */
   private extractColor(element: HTMLElement): string | undefined {
-    let current: HTMLElement | null = element;
+    // First, check the element itself and all its children
+    const allElements = [element, ...Array.from(element.querySelectorAll('*'))];
     
-    while (current) {
+    for (const current of allElements) {
+      if (!(current instanceof HTMLElement)) continue;
+      
       // Method 1: Check for data-color-id or data-color attribute
       const dataColorId = current.getAttribute('data-color-id');
       if (dataColorId) {
-        // Google Calendar color IDs map to specific colors
         const color = this.getColorFromId(dataColorId);
         if (color) {
-          console.log('[Event Parser] Found color from data-color-id:', color);
           return color;
         }
       }
       
       const dataColor = current.getAttribute('data-color');
       if (dataColor) {
-        console.log('[Event Parser] Found color from data-color:', dataColor);
         return dataColor;
       }
       
-      // Method 2: Check for event-color-* classes
+      // Method 2: Check for event-color-* classes or any class with "color" in name
       const classList = Array.from(current.classList);
-      const colorClass = classList.find(cls => cls.startsWith('event-color-') || cls.startsWith('color-'));
-      if (colorClass) {
-        const colorId = colorClass.replace('event-color-', '').replace('color-', '');
-        const color = this.getColorFromId(colorId);
-        if (color) {
-          console.log('[Event Parser] Found color from class:', colorClass, '->', color);
-          return color;
+      
+      for (const cls of classList) {
+        // Look for patterns like "event-color-1", "color-1", "eventColor1", etc.
+        const colorMatch = cls.match(/(?:event[-_]?color|color)[-_]?(\d+)/i);
+        if (colorMatch) {
+          const colorId = colorMatch[1];
+          const color = this.getColorFromId(colorId);
+          if (color) {
+            return color;
+          }
         }
       }
       
       // Method 3: Check computed styles (background-color or border-color)
-      const computedStyle = window.getComputedStyle(current);
-      const bgColor = computedStyle.backgroundColor;
-      const borderColor = computedStyle.borderLeftColor || computedStyle.borderColor;
-      
-      // Use border color if it's not transparent/default, otherwise use background
-      const styleColor = borderColor && borderColor !== 'rgba(0, 0, 0, 0)' && borderColor !== 'transparent' 
-        ? borderColor 
-        : bgColor;
-      
-      if (styleColor && 
-          styleColor !== 'rgba(0, 0, 0, 0)' && 
-          styleColor !== 'transparent' &&
-          styleColor !== 'rgb(255, 255, 255)' &&
-          styleColor !== '#ffffff' &&
-          styleColor !== '#fff') {
-        const hexColor = this.rgbToHex(styleColor);
-        if (hexColor) {
-          console.log('[Event Parser] Found color from computed style:', hexColor);
-          return hexColor;
+      try {
+        const computedStyle = window.getComputedStyle(current);
+        const bgColor = computedStyle.backgroundColor;
+        const borderColor = computedStyle.borderLeftColor || computedStyle.borderTopColor || computedStyle.borderColor;
+        
+        // Use border color if it's not transparent/default, otherwise use background
+        const styleColor = borderColor && 
+                          borderColor !== 'rgba(0, 0, 0, 0)' && 
+                          borderColor !== 'transparent' &&
+                          borderColor !== 'rgb(0, 0, 0)' &&
+                          borderColor !== 'rgb(255, 255, 255)'
+          ? borderColor 
+          : bgColor;
+        
+        if (styleColor && 
+            styleColor !== 'rgba(0, 0, 0, 0)' && 
+            styleColor !== 'transparent' &&
+            styleColor !== 'rgb(255, 255, 255)' &&
+            styleColor !== 'rgb(0, 0, 0)' &&
+            styleColor !== '#ffffff' &&
+            styleColor !== '#fff' &&
+            styleColor !== '#000000' &&
+            styleColor !== '#000') {
+          const hexColor = this.rgbToHex(styleColor);
+          if (hexColor) {
+            return hexColor;
+          }
         }
+      } catch (e) {
+        // Silently continue if computed style fails
       }
       
       // Method 4: Check inline style attribute
       const inlineStyle = current.getAttribute('style');
       if (inlineStyle) {
+        // Try background-color, border-color, border-left-color, etc.
         const bgMatch = inlineStyle.match(/background(?:-color)?:\s*([^;]+)/i);
-        const borderMatch = inlineStyle.match(/border(?:-left)?(?:-color)?:\s*([^;]+)/i);
+        const borderMatch = inlineStyle.match(/border(?:-left|-top|-right|-bottom)?(?:-color)?:\s*([^;]+)/i);
         const colorMatch = bgMatch || borderMatch;
         if (colorMatch) {
           const color = colorMatch[1].trim();
           const hexColor = this.rgbToHex(color) || color;
-          if (hexColor && hexColor !== '#ffffff' && hexColor !== '#fff') {
-            console.log('[Event Parser] Found color from inline style:', hexColor);
+          if (hexColor && 
+              hexColor !== '#ffffff' && 
+              hexColor !== '#fff' &&
+              hexColor !== '#000000' &&
+              hexColor !== '#000') {
             return hexColor;
+          }
+        }
+      }
+    }
+    
+    // Method 5: Check parent elements
+    let current: HTMLElement | null = element.parentElement;
+    let depth = 0;
+    while (current && depth < 3) { // Limit depth to avoid going too far up
+      const dataColorId = current.getAttribute('data-color-id');
+      if (dataColorId) {
+        const color = this.getColorFromId(dataColorId);
+        if (color) {
+          return color;
+        }
+      }
+      
+      const classList = Array.from(current.classList);
+      for (const cls of classList) {
+        const colorMatch = cls.match(/(?:event[-_]?color|color)[-_]?(\d+)/i);
+        if (colorMatch) {
+          const colorId = colorMatch[1];
+          const color = this.getColorFromId(colorId);
+          if (color) {
+            return color;
           }
         }
       }
       
       current = current.parentElement;
+      depth++;
     }
     
     return undefined;
@@ -496,9 +496,20 @@ export class EventParser {
   private rgbToHex(color: string): string | null {
     if (!color) return null;
     
-    // If already hex, return as is
+    // Trim and normalize
+    color = color.trim();
+    
+    // If already hex, return as is (normalize to 6 digits)
     if (color.startsWith('#')) {
-      return color;
+      const hex = color.substring(1);
+      if (hex.length === 3) {
+        // Expand short hex (#abc -> #aabbcc)
+        return `#${hex.split('').map(c => c + c).join('')}`;
+      }
+      if (hex.length === 6) {
+        return `#${hex}`;
+      }
+      return null;
     }
     
     // Parse rgb/rgba
@@ -507,10 +518,35 @@ export class EventParser {
       const r = parseInt(rgbMatch[1]);
       const g = parseInt(rgbMatch[2]);
       const b = parseInt(rgbMatch[3]);
-      return `#${[r, g, b].map(x => {
-        const hex = x.toString(16);
-        return hex.length === 1 ? '0' + hex : hex;
-      }).join('')}`;
+      if (r >= 0 && r <= 255 && g >= 0 && g <= 255 && b >= 0 && b <= 255) {
+        return `#${[r, g, b].map(x => {
+          const hex = x.toString(16);
+          return hex.length === 1 ? '0' + hex : hex;
+        }).join('')}`;
+      }
+    }
+    
+    // Try to parse as named color (basic set)
+    const namedColors: { [key: string]: string } = {
+      'red': '#ff0000',
+      'green': '#008000',
+      'blue': '#0000ff',
+      'yellow': '#ffff00',
+      'orange': '#ffa500',
+      'purple': '#800080',
+      'pink': '#ffc0cb',
+      'cyan': '#00ffff',
+      'magenta': '#ff00ff',
+      'lime': '#00ff00',
+      'navy': '#000080',
+      'teal': '#008080',
+      'maroon': '#800000',
+      'olive': '#808000',
+    };
+    
+    const lowerColor = color.toLowerCase();
+    if (namedColors[lowerColor]) {
+      return namedColors[lowerColor];
     }
     
     return null;
@@ -521,6 +557,9 @@ export class EventParser {
    * These are the default Google Calendar colors
    */
   private getColorFromId(colorId: string): string | null {
+    // Normalize color ID (remove leading zeros, handle string/number)
+    const normalizedId = String(parseInt(colorId, 10));
+    
     const colorMap: { [key: string]: string } = {
       '1': '#a4bdfc', // Lavender
       '2': '#7ae7bf', // Sage
@@ -533,13 +572,23 @@ export class EventParser {
       '9': '#5484ed', // Blueberry
       '10': '#51b749', // Basil
       '11': '#dc2127', // Tomato
+      // Additional colors that might be used
+      '12': '#ff9800', // Orange
+      '13': '#9c27b0', // Purple
+      '14': '#00bcd4', // Cyan
+      '15': '#4caf50', // Green
+      '16': '#f44336', // Red
+      '17': '#2196f3', // Blue
+      '18': '#ffc107', // Amber
+      '19': '#795548', // Brown
+      '20': '#607d8b', // Blue Grey
     };
     
-    return colorMap[colorId] || null;
+    return colorMap[normalizedId] || null;
   }
 
   /**
-   * Extracts date from time text (e.g., "С 12:00 до 12:15, Daily iMe, ..., 26 ноября 2025")
+   * Extracts date from time text (e.g., "С 12:00 до 12:15, Event Title, ..., 26 ноября 2025")
    */
   private extractDateFromTimeText(timeText: string): Date | null {
     if (!timeText) return null;
@@ -554,10 +603,9 @@ export class EventParser {
       const year = parseInt(russianDateMatch[3]);
       if (month >= 0 && day > 0 && day <= 31 && year > 1900 && year < 2100) {
         const date = new Date(year, month, day);
-        date.setHours(0, 0, 0, 0);
-        if (!isNaN(date.getTime())) {
-          console.log('[Event Parser] Extracted date from time text:', date);
-          return date;
+        const normalized = normalizeDate(date);
+        if (isValidDate(normalized)) {
+          return normalized;
         }
       }
     }
@@ -575,16 +623,16 @@ export class EventParser {
       // Try data-date first (most reliable)
       const dataDate = current.getAttribute('data-date');
       if (dataDate) {
+        let date: Date | null = null;
         // Try parsing as ISO string or YYYY-MM-DD
-        let date = new Date(dataDate);
-        if (isNaN(date.getTime()) && dataDate.match(/^\d{4}-\d{2}-\d{2}/)) {
+        if (dataDate.match(/^\d{4}-\d{2}-\d{2}/)) {
           const parts = dataDate.split('-');
           date = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+        } else {
+          date = createNormalizedDate(dataDate);
         }
-        if (!isNaN(date.getTime()) && date.getFullYear() > 1900 && date.getFullYear() < 2100) {
-          date.setHours(0, 0, 0, 0);
-          console.log('[Event Parser] Extracted date from data-date:', date);
-          return date;
+        if (isValidDate(date)) {
+          return normalizeDate(date!);
         }
       }
       
@@ -595,10 +643,8 @@ export class EventParser {
       
       if (dateAttr) {
         const parsed = this.parseDateString(dateAttr);
-        if (parsed && !isNaN(parsed.getTime())) {
-          parsed.setHours(0, 0, 0, 0);
-          console.log('[Event Parser] Extracted date:', parsed);
-          return parsed;
+        if (isValidDate(parsed)) {
+          return normalizeDate(parsed!);
         }
       }
 
@@ -617,15 +663,15 @@ export class EventParser {
         if (eventRect.left >= colRect.left && eventRect.left <= colRect.right) {
           const dateStr = col.getAttribute('data-date');
           if (dateStr) {
-            let date = new Date(dateStr);
-            if (isNaN(date.getTime()) && dateStr.match(/^\d{4}-\d{2}-\d{2}/)) {
+            let date: Date | null = null;
+            if (dateStr.match(/^\d{4}-\d{2}-\d{2}/)) {
               const parts = dateStr.split('-');
               date = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+            } else {
+              date = createNormalizedDate(dateStr);
             }
-            if (!isNaN(date.getTime()) && date.getFullYear() > 1900 && date.getFullYear() < 2100) {
-              date.setHours(0, 0, 0, 0);
-              console.log('[Event Parser] Extracted date from column header:', date);
-              return date;
+            if (isValidDate(date)) {
+              return normalizeDate(date!);
             }
           }
         }
@@ -636,22 +682,14 @@ export class EventParser {
     const urlParams = new URLSearchParams(window.location.search);
     const dateParam = urlParams.get('date');
     if (dateParam) {
-      try {
-        const date = new Date(dateParam);
-        if (!isNaN(date.getTime())) {
-          console.log('[Event Parser] Extracted date from URL:', date);
-          return date;
-        }
-      } catch (e) {
-        console.log('[Event Parser] Could not parse date from URL:', dateParam);
+      const date = createNormalizedDate(dateParam);
+      if (isValidDate(date)) {
+        return date!;
       }
     }
 
     // Fallback to today
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    console.log('[Event Parser] Using today as fallback:', today);
-    return today;
+    return normalizeDate(new Date());
   }
 
   /**
@@ -665,9 +703,9 @@ export class EventParser {
       }
 
       // Try various date formats
-      const date = new Date(dateStr);
-      if (!isNaN(date.getTime()) && date.getFullYear() > 1900 && date.getFullYear() < 2100) {
-        return date;
+      const date = createNormalizedDate(dateStr);
+      if (isValidDate(date)) {
+        return date!;
       }
 
       // Try parsing relative dates
@@ -690,15 +728,15 @@ export class EventParser {
         const year = parseInt(russianDateMatch[3]);
         if (month >= 0 && day > 0 && day <= 31 && year > 1900 && year < 2100) {
           const date = new Date(year, month, day);
-          if (!isNaN(date.getTime())) {
-            return date;
+          const normalized = normalizeDate(date);
+          if (isValidDate(normalized)) {
+            return normalized;
           }
         }
       }
 
       return null;
     } catch (error) {
-      console.log('[Event Parser] Error parsing date string:', dateStr, error);
       return null;
     }
   }
@@ -708,14 +746,11 @@ export class EventParser {
    * Supports formats: "9:30 AM - 10:00 AM", "09:30-10:00", "С 13:00 до 13:30" (Russian)
    */
   private parseTime(timeText: string, element: HTMLElement): { startMinutes: number | null; endMinutes: number | null } {
-    console.log('[Event Parser] Parsing time from text:', timeText);
-    
     // Try to get from data attributes first
     const startTime = element.getAttribute('data-start-time');
     const endTime = element.getAttribute('data-end-time');
 
     if (startTime && endTime) {
-      console.log('[Event Parser] Found time in data attributes:', startTime, endTime);
       return {
         startMinutes: this.timeToMinutes(startTime),
         endMinutes: this.timeToMinutes(endTime)
@@ -725,7 +760,6 @@ export class EventParser {
     // Parse Russian format: "С 13:00 до 13:30" or "с 13:00 до 13:30"
     const russianMatch = timeText.match(/[Сс]\s*(\d{1,2}):(\d{2})\s+до\s+(\d{1,2}):(\d{2})/i);
     if (russianMatch) {
-      console.log('[Event Parser] Found Russian time format');
       const startHour = parseInt(russianMatch[1]);
       const startMin = parseInt(russianMatch[2]);
       const endHour = parseInt(russianMatch[3]);
@@ -733,14 +767,12 @@ export class EventParser {
 
       const startMinutes = startHour * 60 + startMin;
       const endMinutes = endHour * 60 + endMin;
-      console.log('[Event Parser] Parsed time:', startMinutes, endMinutes);
       return { startMinutes, endMinutes };
     }
 
     // Parse from text like "9:30 AM - 10:00 AM" or "09:30-10:00"
     const timeMatch = timeText.match(/(\d{1,2}):(\d{2})\s*(AM|PM)?.*?(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
     if (timeMatch) {
-      console.log('[Event Parser] Found English time format');
       const startHour = parseInt(timeMatch[1]);
       const startMin = parseInt(timeMatch[2]);
       const startAmPm = timeMatch[3]?.toUpperCase();
@@ -750,7 +782,6 @@ export class EventParser {
 
       const startMinutes = this.convertTo24Hour(startHour, startMin, startAmPm);
       const endMinutes = this.convertTo24Hour(endHour, endMin, endAmPm);
-      console.log('[Event Parser] Parsed time:', startMinutes, endMinutes);
       return { startMinutes, endMinutes };
     }
 
@@ -758,7 +789,6 @@ export class EventParser {
     const ariaLabel = element.getAttribute('aria-label') || '';
     const ariaMatch = ariaLabel.match(/(\d{1,2}):(\d{2}).*?(\d{1,2}):(\d{2})/);
     if (ariaMatch) {
-      console.log('[Event Parser] Found time in aria-label');
       const startHour = parseInt(ariaMatch[1]);
       const startMin = parseInt(ariaMatch[2]);
       const endHour = parseInt(ariaMatch[3]);
@@ -766,14 +796,12 @@ export class EventParser {
 
       const startMinutes = startHour * 60 + startMin;
       const endMinutes = endHour * 60 + endMin;
-      console.log('[Event Parser] Parsed time from aria-label:', startMinutes, endMinutes);
       return {
         startMinutes,
         endMinutes
       };
     }
 
-    console.log('[Event Parser] Could not parse time from:', timeText);
     return { startMinutes: null, endMinutes: null };
   }
 
@@ -835,12 +863,11 @@ export class EventParser {
       const seen = new Set<string>();
       return events.filter(event => {
         try {
-          // Validate date before using toDateString
-          if (!event.date || isNaN(event.date.getTime())) {
+          if (!isValidDate(event.date)) {
             console.warn('[Event Parser] Skipping event with invalid date in deduplication:', event);
             return false;
           }
-          const key = `${event.title}-${event.date.toDateString()}-${event.startMinutes}`;
+          const key = `${event.title}-${event.date!.toDateString()}-${event.startMinutes}`;
           if (seen.has(key)) {
             return false;
           }

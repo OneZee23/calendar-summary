@@ -5,7 +5,8 @@
 
 import { PageDetector } from './page-detector';
 import { EventParser } from './event-parser';
-import { TimeCalculator } from './time-calculator';
+import { TimeCalculator, GroupingMode } from './time-calculator';
+import { isValidDate } from './date-utils';
 
 /**
  * Main application class
@@ -27,16 +28,14 @@ class CalendarSummaryApp {
    * No UI updates - only prepares for popup requests
    */
   public init(): void {
-    console.log('[Calendar Summary] Content script initialized (popup mode)');
     // No automatic UI updates - only respond to popup requests
   }
 
   /**
    * Gets current summary data for popup
    */
-  public getSummaryData(): { summaries: any[]; dateRange: any; error: string | null } {
+  public getSummaryData(groupingMode: GroupingMode = GroupingMode.BY_NAME): { summaries: any[]; dateRange: any; error: string | null } {
     try {
-      console.log('[Calendar Summary] Getting summary data for popup...');
       
       let detection;
       try {
@@ -64,14 +63,11 @@ class CalendarSummaryApp {
         const parsedEvents = this.eventParser.parseEvents();
         // Filter out events with invalid dates before processing
         events = parsedEvents.filter(event => {
-          if (!event || !event.date) {
+          if (!event) {
             return false;
           }
           try {
-            // Check if date is a valid Date object
-            const date = event.date instanceof Date ? event.date : new Date(event.date);
-            if (isNaN(date.getTime()) || 
-                date.getFullYear() < 1900 || date.getFullYear() > 2100) {
+            if (!isValidDate(event.date)) {
               return false;
             }
             // Validate other required fields
@@ -96,21 +92,13 @@ class CalendarSummaryApp {
         };
       }
       
-      console.log('[Calendar Summary] Found events for popup:', events.length, 'after filtering invalid dates');
 
       // Filter by date range if available
       if (detection.dateRange) {
         const { start, end } = detection.dateRange;
-        // Validate date range before filtering
-        if (start && end && 
-            !isNaN(start.getTime()) && !isNaN(end.getTime()) &&
-            start.getFullYear() > 1900 && end.getFullYear() < 2100) {
+        if (isValidDate(start) && isValidDate(end)) {
           try {
-            events = this.timeCalculator.filterEventsByDateRange(
-              events,
-              start,
-              end
-            );
+            events = this.timeCalculator.filterEventsByDateRange(events, start!, end!);
           } catch (error) {
             console.error('[Calendar Summary] Error filtering by date range:', error);
             // Continue without filtering
@@ -123,8 +111,7 @@ class CalendarSummaryApp {
       // Calculate summaries with error handling
       let summaries: any[] = [];
       try {
-        summaries = this.timeCalculator.calculateSummaries(events);
-        console.log('[Calendar Summary] Summaries for popup:', summaries);
+        summaries = this.timeCalculator.calculateSummaries(events, groupingMode);
       } catch (error) {
         console.error('[Calendar Summary] Error calculating summaries:', error);
         return {
@@ -137,18 +124,12 @@ class CalendarSummaryApp {
       // Validate date range before converting to ISO string
       let dateRange = null;
       if (detection.dateRange) {
-        const start = detection.dateRange.start;
-        const end = detection.dateRange.end;
-        
-        // Validate dates
-        if (start && end && 
-            !isNaN(start.getTime()) && !isNaN(end.getTime()) &&
-            start.getFullYear() > 1900 && start.getFullYear() < 2100 &&
-            end.getFullYear() > 1900 && end.getFullYear() < 2100) {
+        const { start, end } = detection.dateRange;
+        if (isValidDate(start) && isValidDate(end)) {
           try {
             dateRange = {
-              start: start.toISOString(),
-              end: end.toISOString()
+              start: start!.toISOString(),
+              end: end!.toISOString()
             };
           } catch (error) {
             console.error('[Calendar Summary] Error converting dates to ISO:', error);
@@ -164,7 +145,8 @@ class CalendarSummaryApp {
           name: s.name,
           totalMinutes: s.totalMinutes,
           count: s.count,
-          formattedDuration: s.formattedDuration
+          formattedDuration: s.formattedDuration,
+          color: s.color
         })),
         dateRange,
         error: null
@@ -188,17 +170,15 @@ class CalendarSummaryApp {
 }
 
 // Initialize the application
-console.log('[Calendar Summary] Initializing content script...');
 const app = new CalendarSummaryApp();
 app.init();
 
 // Listen for messages from popup
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  console.log('[Calendar Summary] Received message:', request);
   if (request.action === 'getSummary') {
     try {
-      const data = app.getSummaryData();
-      console.log('[Calendar Summary] Sending summary data:', data);
+      const groupingMode = request.groupingMode || GroupingMode.BY_NAME;
+      const data = app.getSummaryData(groupingMode);
       sendResponse(data);
       return true; // Keep channel open for async response
     } catch (error) {
@@ -213,9 +193,6 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
   return false;
 });
-
-// Signal that content script is ready
-console.log('[Calendar Summary] Content script ready');
 
 // Cleanup on page unload
 window.addEventListener('beforeunload', () => {
